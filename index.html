@@ -10,6 +10,7 @@
             padding: 20px;
             background: #f0f0f0;
             font-family: Arial, sans-serif;
+            touch-action: none;
         }
 
         .controls {
@@ -27,12 +28,12 @@
             position: absolute;
             width: 200px;
             min-height: 200px;
-            background: #ffd700;
             padding: 10px;
             box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
             cursor: move;
             display: flex;
             flex-direction: column;
+            touch-action: none;
         }
 
         .sticky-note textarea {
@@ -49,6 +50,7 @@
             height: 150px;
             background: transparent;
             border-top: 1px solid #ccc;
+            touch-action: none;
         }
 
         .note-header {
@@ -71,6 +73,15 @@
             padding: 3px;
             cursor: pointer;
         }
+
+        @media (max-width: 768px) {
+            .controls {
+                width: calc(100% - 60px);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+        }
     </style>
 </head>
 <body>
@@ -81,23 +92,60 @@
     </div>
 
     <script>
+        const noteColors = [
+            '#ffd700', '#ff7eb9', '#ff65a3', '#7afcff', '#feff9c',
+            '#fff740', '#98ff98', '#ffb347', '#ff9999', '#87ceeb'
+        ];
+
         let notes = [];
         let isDragging = false;
         let currentNote = null;
-        let startX, startY, initialX, initialY;
+        let startX, startY;
 
-        function createNote() {
+        // Load notes from localStorage on page load
+        document.addEventListener('DOMContentLoaded', loadNotes);
+
+        function getRandomColor() {
+            return noteColors[Math.floor(Math.random() * noteColors.length)];
+        }
+
+        function saveNotes() {
+            const notesData = Array.from(document.querySelectorAll('.sticky-note')).map(note => ({
+                id: note.id,
+                left: note.style.left,
+                top: note.style.top,
+                backgroundColor: note.style.backgroundColor,
+                text: note.querySelector('textarea').value,
+                canvasData: note.querySelector('canvas').toDataURL(),
+                isDrawMode: note.querySelector('canvas').style.display === 'block'
+            }));
+            localStorage.setItem('stickyNotes', JSON.stringify(notesData));
+        }
+
+        function loadNotes() {
+            const savedNotes = JSON.parse(localStorage.getItem('stickyNotes')) || [];
+            savedNotes.forEach(noteData => {
+                createNote(noteData);
+            });
+        }
+
+        function createNote(savedData = null) {
             const note = document.createElement('div');
             note.className = 'sticky-note';
-            note.style.left = `${window.innerWidth/3}px`;
-            note.style.top = `${window.innerHeight/3}px`;
+            note.id = savedData?.id || 'note_' + Date.now();
+            note.style.backgroundColor = savedData?.backgroundColor || getRandomColor();
+            note.style.left = savedData?.left || `${window.innerWidth/3}px`;
+            note.style.top = savedData?.top || `${window.innerHeight/3}px`;
 
             const header = document.createElement('div');
             header.className = 'note-header';
 
             const closeBtn = document.createElement('button');
             closeBtn.textContent = 'X';
-            closeBtn.onclick = () => note.remove();
+            closeBtn.onclick = () => {
+                note.remove();
+                saveNotes();
+            };
 
             const modeToggle = document.createElement('button');
             modeToggle.className = 'mode-toggle';
@@ -113,69 +161,101 @@
             canvas.width = 200;
             canvas.height = 150;
 
+            if (savedData) {
+                textarea.value = savedData.text;
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0);
+                };
+                img.src = savedData.canvasData;
+            }
+
             let isDrawing = false;
-            let isDrawMode = false;
+            let isDrawMode = savedData?.isDrawMode || false;
             
             modeToggle.onclick = () => {
                 isDrawMode = !isDrawMode;
                 textarea.style.display = isDrawMode ? 'none' : 'block';
                 canvas.style.display = isDrawMode ? 'block' : 'none';
+                saveNotes();
             };
 
             note.appendChild(header);
             note.appendChild(textarea);
             note.appendChild(canvas);
 
+            // Set initial display based on mode
+            textarea.style.display = isDrawMode ? 'none' : 'block';
+            canvas.style.display = isDrawMode ? 'block' : 'none';
+
             // Drawing functionality
-            canvas.style.display = 'none';
             let lastX, lastY;
 
+            function startDrawing(e) {
+                isDrawing = true;
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || e.touches[0].clientX) - rect.left;
+                const y = (e.clientY || e.touches[0].clientY) - rect.top;
+                [lastX, lastY] = [x, y];
+            }
+
+            function draw(e) {
+                if (!isDrawing) return;
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || e.touches[0].clientX) - rect.left;
+                const y = (e.clientY || e.touches[0].clientY) - rect.top;
+                
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(x, y);
+                ctx.strokeStyle = document.getElementById('colorPicker').value;
+                ctx.lineWidth = document.getElementById('brushSize').value;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+                [lastX, lastY] = [x, y];
+            }
+
+            function stopDrawing() {
+                if (isDrawing) {
+                    isDrawing = false;
+                    saveNotes();
+                }
+            }
+
+            // Mouse events for drawing
             canvas.addEventListener('mousedown', startDrawing);
             canvas.addEventListener('mousemove', draw);
             canvas.addEventListener('mouseup', stopDrawing);
             canvas.addEventListener('mouseout', stopDrawing);
 
-            function startDrawing(e) {
-                isDrawing = true;
-                [lastX, lastY] = [e.offsetX, e.offsetY];
-            }
-
-            function draw(e) {
-                if (!isDrawing) return;
-                ctx.beginPath();
-                ctx.moveTo(lastX, lastY);
-                ctx.lineTo(e.offsetX, e.offsetY);
-                ctx.strokeStyle = document.getElementById('colorPicker').value;
-                ctx.lineWidth = document.getElementById('brushSize').value;
-                ctx.lineCap = 'round';
-                ctx.stroke();
-                [lastX, lastY] = [e.offsetX, e.offsetY];
-            }
-
-            function stopDrawing() {
-                isDrawing = false;
-            }
+            // Touch events for drawing
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                startDrawing(e);
+            });
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                draw(e);
+            });
+            canvas.addEventListener('touchend', stopDrawing);
 
             // Dragging functionality
-            note.addEventListener('mousedown', dragStart);
-            note.addEventListener('mousemove', drag);
-            note.addEventListener('mouseup', dragEnd);
-            note.addEventListener('mouseleave', dragEnd);
-
             function dragStart(e) {
                 if (e.target === note || e.target === header) {
                     isDragging = true;
                     currentNote = note;
-                    startX = e.pageX - note.offsetLeft;
-                    startY = e.pageY - note.offsetTop;
+                    const touch = e.type === 'touchstart' ? e.touches[0] : e;
+                    startX = touch.pageX - note.offsetLeft;
+                    startY = touch.pageY - note.offsetTop;
                 }
             }
 
             function drag(e) {
                 if (isDragging && currentNote === note) {
                     e.preventDefault();
-                    let newX = e.pageX - startX;
-                    let newY = e.pageY - startY;
+                    const touch = e.type === 'touchmove' ? e.touches[0] : e;
+                    let newX = touch.pageX - startX;
+                    let newY = touch.pageY - startY;
                     
                     note.style.left = `${newX}px`;
                     note.style.top = `${newY}px`;
@@ -183,12 +263,30 @@
             }
 
             function dragEnd() {
-                isDragging = false;
-                currentNote = null;
+                if (isDragging) {
+                    isDragging = false;
+                    currentNote = null;
+                    saveNotes();
+                }
             }
+
+            // Mouse events for dragging
+            note.addEventListener('mousedown', dragStart);
+            note.addEventListener('mousemove', drag);
+            note.addEventListener('mouseup', dragEnd);
+            note.addEventListener('mouseleave', dragEnd);
+
+            // Touch events for dragging
+            note.addEventListener('touchstart', dragStart);
+            note.addEventListener('touchmove', drag);
+            note.addEventListener('touchend', dragEnd);
+
+            // Auto-save on text changes
+            textarea.addEventListener('input', saveNotes);
 
             document.body.appendChild(note);
             notes.push(note);
+            saveNotes();
         }
 
         // Prevent dragging conflicts
@@ -203,10 +301,19 @@
             }
         });
 
-        document.addEventListener('mouseup', () => {
-            isDragging = false;
-            currentNote = null;
-        });
+        document.addEventListener('touchmove', (e) => {
+            if (isDragging && currentNote) {
+                e.preventDefault();
+                let newX = e.touches[0].pageX - startX;
+                let newY = e.touches[0].pageY - startY;
+                
+                currentNote.style.left = `${newX}px`;
+                currentNote.style.top = `${newY}px`;
+            }
+        }, { passive: false });
+
+        document.addEventListener('mouseup', dragEnd);
+        document.addEventListener('touchend', dragEnd);
     </script>
 </body>
 </html>
